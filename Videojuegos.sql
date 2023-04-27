@@ -39,9 +39,7 @@ CREATE TABLE videojuego (
     sinopsis VARCHAR(1000),
     fecha_publicacion DATE,
     nombre_desarrollador VARCHAR(100),
-    nombre_editor VARCHAR(100),
-    nombre_genero VARCHAR(50),
-    nombre_plataforma VARCHAR(50)
+    nombre_editor VARCHAR(100)
 );
 
 -- Añadir claves primarias y claves foráneas
@@ -59,9 +57,7 @@ ADD CONSTRAINT fk_nombre_genero_videojuego_plataforma FOREIGN KEY (nombre_plataf
 
 ALTER TABLE videojuego
 ADD CONSTRAINT fk_nombre_desarrollador FOREIGN KEY (nombre_desarrollador) REFERENCES desarrollador(nombre) ON DELETE CASCADE,
-ADD CONSTRAINT fk_nombre_editor FOREIGN KEY (nombre_editor) REFERENCES editor(nombre) ON DELETE CASCADE,
-ADD CONSTRAINT fk_nombre_genero FOREIGN KEY (nombre_genero) REFERENCES videojuego_genero(nombre_videojuego) ON DELETE CASCADE,
-ADD CONSTRAINT fk_nombre_plataforma FOREIGN KEY (nombre_plataforma) REFERENCES videojuego_plataforma(nombre_videojuego) ON DELETE CASCADE
+ADD CONSTRAINT fk_nombre_editor FOREIGN KEY (nombre_editor) REFERENCES editor(nombre) ON DELETE CASCADE
 ;
 
 -- Índices
@@ -90,5 +86,5 @@ ON videojuego_plataforma (nombre_videojuego, nombre_plataforma)
 ;
 
 CREATE INDEX idx_videojuego
-ON videojuego (nombre, nombre_genero)
+ON videojuego (nombre, nombre_desarrollador)
 ;
