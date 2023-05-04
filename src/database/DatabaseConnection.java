@@ -9,22 +9,26 @@ import java.sql.SQLException;
  * @version 1.0
  */
 public class DatabaseConnection {
-    private static Connection connection;
+    private static DatabaseConnection instance;
+    private Connection connection;
 
-    public static Connection getConnection(String database) {
-        if (DatabaseConnection.connection == null) {
-            DatabaseConnection.connect("jdbc:mysql://localhost:3306/", database,"root", "");
-        }
-        return DatabaseConnection.connection;
-    }
-
-    private static boolean connect(String connectionString, String database, String user, String password) {
+    private DatabaseConnection(String database, String user, String password) {
         try {
             DriverManager.registerDriver(new com.mysql.cj.jdbc.Driver());
-            DatabaseConnection.connection = DriverManager.getConnection(connectionString + database, user, password);
+            this.connection = DriverManager.getConnection("jdbc:mysql://localhost:3306/" + database, user, password);
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        return connection != null;
+    }
+
+    public static DatabaseConnection getInstance(String database, String user, String password) {
+        if (DatabaseConnection.instance == null) {
+            return new DatabaseConnection(database,user, password);
+        }
+        return DatabaseConnection.instance;
+    }
+
+    public Connection getConnection() {
+        return connection;
     }
 }
