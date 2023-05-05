@@ -56,8 +56,8 @@ ADD CONSTRAINT fk_nombre_genero_videojuego_plataforma FOREIGN KEY (nombre_plataf
 ;
 
 ALTER TABLE videojuego
-ADD CONSTRAINT fk_nombre_desarrollador FOREIGN KEY (nombre_desarrollador) REFERENCES desarrollador(nombre) ON DELETE CASCADE,
-ADD CONSTRAINT fk_nombre_editor FOREIGN KEY (nombre_editor) REFERENCES editor(nombre) ON DELETE CASCADE
+ADD CONSTRAINT fk_nombre_desarrollador FOREIGN KEY (nombre_desarrollador) REFERENCES desarrollador(nombre) ON DELETE CASCADE ON UPDATE CASCADE,
+ADD CONSTRAINT fk_nombre_editor FOREIGN KEY (nombre_editor) REFERENCES editor(nombre) ON DELETE CASCADE ON UPDATE CASCADE
 ;
 
 -- Índices

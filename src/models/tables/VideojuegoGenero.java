@@ -1,4 +1,4 @@
-package src.models;
+package src.models.tables;
 
 public class VideojuegoGenero implements Agregable {
     private String nombreVideojuego, nombreGenero;

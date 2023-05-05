@@ -1,4 +1,4 @@
-package src.models;
+package src.models.tables;
 
 public class Genero implements Agregable {
     private String nombre, descripcion;

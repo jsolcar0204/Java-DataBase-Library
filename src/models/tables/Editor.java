@@ -1,4 +1,4 @@
-package src.models;
+package src.models.tables;
 
 import java.time.LocalDate;
 
