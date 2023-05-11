@@ -61,11 +61,11 @@ public class Videojuego implements Agregable {
         this.nombreDesarrollador = nombreDesarrollador;
     }
 
-    public String getNombre_editor() {
+    public String getNombreEditor() {
         return nombre_editor;
     }
 
-    public void setNombre_editor(String nombre_editor) {
+    public void setNombreEditor(String nombre_editor) {
         this.nombre_editor = nombre_editor;
     }
 }
