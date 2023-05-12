@@ -1,8 +1,6 @@
 package src.database;
 
-import org.w3c.dom.Attr;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
+import org.w3c.dom.*;
 import src.models.ColumnOrder;
 import src.models.enums.*;
 import src.models.tables.*;
@@ -210,11 +208,11 @@ public class DatabaseManager {
         return rows;
     }
 
-    public void updateRows(Tablas table, Agregable agregable) {
+    /*public int updateRows(Tablas tableName, Agregable... agregable) {
+        return 0;
+    }*/
 
-    }
-
-    public boolean insertRows(Tablas tableName, Agregable... agregables) {
+    public int insertRows(Tablas tableName, Agregable... agregables) {
         try {
             PreparedStatement preparedStatement;
             String insertSentence = "INSERT INTO " + tableName + " (";
@@ -269,25 +267,59 @@ public class DatabaseManager {
             }
             insertSentence = insertSentence.substring(0, insertSentence.length()-1);
             preparedStatement = this.databaseConnection.getConnection().prepareStatement(insertSentence);
-            return preparedStatement.execute();
+            return preparedStatement.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        return false;
+        return 0;
     }
 
-    /*public boolean deleteRows(Tablas tableName, String columnName, String... namesId) {
+    public int deleteRows(Tablas tableName, HashMap<String, Object> columnValue) {
         try {
             PreparedStatement preparedStatement;
             String deleteSentence = "DELETE FROM " + tableName + " WHERE ";
             deleteSentence = deleteSentence.substring(0, deleteSentence.length()-1);
-            System.out.println(deleteSentence);
+            for (String key : columnValue.keySet()) {
+                deleteSentence += " " + key + " = ? OR";
+            }
+            deleteSentence = deleteSentence.substring(0, deleteSentence.length()-3);
             preparedStatement = this.databaseConnection.getConnection().prepareStatement(deleteSentence);
-            return preparedStatement.execute();
+            int dataType = 0, counter = 0;
+            for (Object value : columnValue.values()) {
+                if (value instanceof String) {
+                    dataType = Types.VARCHAR;
+                } else if (value instanceof Integer) {
+                    dataType = Types.INTEGER;
+                } else if (value instanceof Double) {
+                    dataType = Types.DOUBLE;
+                }
+                preparedStatement.setObject(++counter, value, dataType);
+            }
+            return preparedStatement.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        return false;
+        return 0;
+    }
+
+    /*public void importXmlToTable(Tablas tableName, String xmlFileName) {
+        try {
+            Document document = DocumentBuilderFactory.newDefaultInstance().newDocumentBuilder().parse(xmlFileName);
+            Element root = document.getDocumentElement();
+            String insertSentence = "INSERT INTO " + root.getChildNodes().item(1).getNodeName() + " (";
+            NodeList childrenNodes = root.getChildNodes();
+            insertSentence += "nombre,";
+            System.out.println(root.getChildNodes().item(1).getChildNodes().item(3).getTextContent());
+            System.out.println(childrenNodes.item(1).getChildNodes().getLength());
+            for (int i = 1; i <= childrenNodes.item(1).getChildNodes().getLength(); i+=2) {
+                Node node = childrenNodes.item(i);
+                insertSentence += node.getChildNodes().item(i).getNodeName() + ",";
+            }
+            insertSentence = insertSentence.substring(0, insertSentence.length()-1).concat(") VALUES (");
+            System.out.println(insertSentence);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }*/
 
     public void exportTableToXml(Tablas tableName, String xmlFileName) {
@@ -331,7 +363,7 @@ public class DatabaseManager {
                 } else if (row instanceof Videojuego) {
                     Videojuego videogame = (Videojuego) row;
                     childElement.setAttribute(TablaPlataforma.NOMBRE.getColumnName(), videogame.getNombre());
-                    Element synopsis = document.createElement(TablaVideojuego.NOMBRE.getColumnName());
+                    Element synopsis = document.createElement(TablaVideojuego.SINOPSIS.getColumnName());
                     synopsis.appendChild(document.createTextNode(videogame.getSinopsis()));
                     Element datePublication = document.createElement(TablaVideojuego.FECHA_PUBLICACION.getColumnName());
                     datePublication.appendChild(document.createTextNode(videogame.getFechaPublicacion().toString()));

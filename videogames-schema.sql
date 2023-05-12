@@ -45,14 +45,14 @@ CREATE TABLE videojuego (
 -- Añadir claves primarias y claves foráneas
 ALTER TABLE videojuego_genero
 ADD CONSTRAINT pk_videojuego_genero PRIMARY KEY (nombre_videojuego, nombre_genero),
-ADD CONSTRAINT fk_nombre_videojuego_videojuego_genero FOREIGN KEY (nombre_videojuego) REFERENCES videojuego(nombre),
-ADD CONSTRAINT fk_nombre_genero_videojuego_genero FOREIGN KEY (nombre_genero) REFERENCES genero(nombre)
+ADD CONSTRAINT fk_nombre_videojuego_videojuego_genero FOREIGN KEY (nombre_videojuego) REFERENCES videojuego(nombre) ON DELETE CASCADE ON UPDATE CASCADE,
+ADD CONSTRAINT fk_nombre_genero_videojuego_genero FOREIGN KEY (nombre_genero) REFERENCES genero(nombre) ON DELETE CASCADE ON UPDATE CASCADE
 ;
 
 ALTER TABLE videojuego_plataforma
 ADD CONSTRAINT pk_videojuego_plataforma PRIMARY KEY (nombre_videojuego, nombre_plataforma),
-ADD CONSTRAINT fk_nombre_videojuego_videojuego_plataforma FOREIGN KEY (nombre_videojuego) REFERENCES videojuego(nombre),
-ADD CONSTRAINT fk_nombre_genero_videojuego_plataforma FOREIGN KEY (nombre_plataforma) REFERENCES plataforma(nombre)
+ADD CONSTRAINT fk_nombre_videojuego_videojuego_plataforma FOREIGN KEY (nombre_videojuego) REFERENCES videojuego(nombre) ON DELETE CASCADE ON UPDATE CASCADE,
+ADD CONSTRAINT fk_nombre_genero_videojuego_plataforma FOREIGN KEY (nombre_plataforma) REFERENCES plataforma(nombre) ON DELETE CASCADE ON UPDATE CASCADE
 ;
 
 ALTER TABLE videojuego
