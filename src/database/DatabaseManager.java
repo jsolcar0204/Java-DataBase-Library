@@ -13,6 +13,7 @@ import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 import java.io.FileWriter;
+import java.lang.reflect.Field;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -20,7 +21,9 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.stream.Collectors;
 
 /**
  * @author José Julio
@@ -208,9 +211,54 @@ public class DatabaseManager {
         return rows;
     }
 
-    /*public int updateRows(Tablas tableName, Agregable... agregable) {
+    public int updateRows(Tablas tableName, Agregable... agregables) {
+        try {
+            PreparedStatement preparedStatement;
+            String updateSentence = "";
+            String columns = switch (tableName) {
+                case DESARROLLADOR -> Arrays.stream(TablaDesarrollador.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+                case EDITOR -> Arrays.stream(TablaEditor.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+                case GENERO -> Arrays.stream(TablaGenero.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+                case PLATAFORMA -> Arrays.stream(TablaPlataforma.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+                case VIDEOJUEGO -> Arrays.stream(TablaVideojuego.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+                case VIDEOJUEGO_GENERO -> Arrays.stream(TablaVideojuegoGenero.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+                case VIDEOJUEGO_PLATAFORMA -> Arrays.stream(TablaVideojuegoPlataforma.values())
+                        .map(table -> table.getColumnName() + " = ?,")
+                        .collect(Collectors.joining());
+            };
+            columns = columns.substring(0, columns.length()-1);
+            columns = columns.replace("nombre = ?,", "");
+            updateSentence += "UPDATE " + tableName + " SET " + columns + " WHERE nombre = ?";
+            preparedStatement = this.databaseConnection.getConnection().prepareStatement(updateSentence);
+            int counter = 0;
+            Field[] fields;
+            for (Agregable agregable : agregables) {
+                fields = agregable.getClass().getDeclaredFields();
+                for (int i = 1; i < fields.length; i++) {
+                    fields[i].setAccessible(true);
+                    preparedStatement.setObject(++counter, fields[i].get(agregable));
+                }
+                fields[0].setAccessible(true);
+                preparedStatement.setObject(++counter, fields[0].get(agregable));
+            }
+            return preparedStatement.executeUpdate();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         return 0;
-    }*/
+    }
 
     public int insertRows(Tablas tableName, Agregable... agregables) {
         try {
