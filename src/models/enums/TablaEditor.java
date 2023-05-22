@@ -1,13 +1,30 @@
 package src.models.enums;
 
-public enum TablaEditor {
-    NOMBRE("nombre"),
-    FECHA_FUNDACION("fecha_fundacion");
+/**
+ * Enum que implementa la interfaz {@link Columnable}.
+ * Guarda información respectiva a su tabla correspondiente de la base de datos, así como
+ * el nombre de la columna, si es una clave primaria y si es una clave foránea.
+ * @author José Julio
+ * @version 1.0
+ * @see src.models.tables.Editor
+ */
+public enum TablaEditor implements Columnable {
+    /**
+     * Columna <b>nombre</b> de la tabla {@link src.models.tables.Editor Editor}
+     */
+    NOMBRE("nombre", true, false),
+    /**
+     * Columna <b>fecha_fundacion</b> de la tabla {@link src.models.tables.Editor Editor}
+     */
+    FECHA_FUNDACION("fecha_fundacion", false, false);
 
     private String columnName;
+    private boolean isPrimaryKey, isForeignKey;
 
-    TablaEditor(String columnName) {
+    TablaEditor(String columnName, boolean isPrimaryKey, boolean isForeignKey) {
         this.columnName = columnName;
+        this.isPrimaryKey = isPrimaryKey;
+        this.isForeignKey = isForeignKey;
     }
 
     @Override
@@ -15,7 +32,18 @@ public enum TablaEditor {
         return columnName;
     }
 
+    @Override
     public String getColumnName() {
         return columnName;
+    }
+
+    @Override
+    public boolean isPrimaryKey() {
+        return isPrimaryKey;
+    }
+
+    @Override
+    public boolean isForeignKey() {
+        return isForeignKey;
     }
 }

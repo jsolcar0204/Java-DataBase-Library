@@ -1,17 +1,36 @@
 package src.database;
 
-import org.w3c.dom.*;
-import src.models.ColumnOrder;
-import src.models.enums.*;
-import src.models.tables.*;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import src.models.enums.Columnable;
+import src.models.enums.TablaDesarrollador;
+import src.models.enums.TablaEditor;
+import src.models.enums.TablaGenero;
+import src.models.enums.TablaPlataforma;
+import src.models.enums.TablaVideojuego;
+import src.models.enums.TablaVideojuegoGenero;
+import src.models.enums.TablaVideojuegoPlataforma;
+import src.models.enums.Tablas;
+import src.models.tables.Agregable;
+import src.models.tables.Desarrollador;
+import src.models.tables.Editor;
+import src.models.tables.Genero;
+import src.models.tables.Plataforma;
+import src.models.tables.Videojuego;
+import src.models.tables.VideojuegoGenero;
+import src.models.tables.VideojuegoPlataforma;
+import src.models.utils.ColumnFilter;
+import src.models.utils.ColumnOrder;
 
 import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
+import java.io.File;
 import java.io.FileWriter;
 import java.lang.reflect.Field;
 import java.sql.PreparedStatement;
@@ -23,51 +42,65 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
+ * Clase que permite realizar operaciones CRUD sobre la base
+ * de datos de videojuegos. Permite realizar consultas personalizadas,
+ * inserción de múltiples registros, actualización de múltiples registros,
+ * eliminación de múltiples registros, convertir los datos de la base de datos
+ * a XML y viceversa. Utiliza la clase {@link DatabaseConnection} para manejar la conexión.
  * @author José Julio
  * @version 1.0
  */
 public class DatabaseManager {
     private DatabaseConnection databaseConnection;
 
-    public DatabaseManager(String databaseName) {
-        this.databaseConnection = DatabaseConnection.getInstance(databaseName, "root", "");
+    /**
+     * Constructor que crea un objeto de tipo DatabaseManager. Permite indicar
+     * si se desean utilizar transacciones para realizar el commit manualmente
+     * o no. En el caso de que se realicen transacciones, se debe de <b>abrir y cerrar la conexión manualmente</b>,
+     * que se hace llamando al método <b>getDatabaseConnection() (.open() para abrir y .disconnect() para cerrar)</b>.
+     * Para realizar el commit: <b>getDatabaseConnection().getConnection().commit()</b>.
+     * @param isAutoCommitEnabled Booleano para indicar si se desea trabajar con transacciones
+     */
+    public DatabaseManager(boolean isAutoCommitEnabled) {
+        this.databaseConnection = DatabaseConnection.getInstance();
+        this.databaseConnection.setAutoCommitEnabled(isAutoCommitEnabled);
     }
 
     /**
      * Obtiene todos los registros de la base de datos. Se le debe de pasar
      * el nombre de la tabla que se quiere obtener (utilizar enum {@link Tablas})
      * y, si se le pasan columnas, obtiene las columnas dichas de la tabla
-     * (se recomienda utilizar enums correspondientes en el paquete models.enums).
+     * (usar enums del paquete models.enums).
      * En caso de que no se pasen columnas, se obtendrán todas las columnas.
-     * @param tableName Nombre de la tabla que se quieren sacar los registros
-     * @param columns Nombre de las columnas que se desea obtener
+     * @param tableName Tabla de la que se quieren sacar los registros
+     * @param columns Columnas que se desea obtener en la consulta
      * @return Devuelve un ArrayList con todos los registros que ha encontrado según
      * los parámetros especificados
      */
-    public ArrayList<Agregable> getData(Tablas tableName, String... columns) {
+    public ArrayList<Agregable> getData(Tablas tableName, Columnable... columns) {
         ArrayList<Agregable> rows = new ArrayList<Agregable>();
+        if (tableName == null || columns == null || this.checkIfTableTypeNotEqualsColumnsType(tableName, columns)) {
+            return rows;
+        }
+        if (this.databaseConnection.isAutoCommitEnabled()) {
+            this.databaseConnection.open();
+        }
         try {
-            PreparedStatement preparedStatement;
-            String query = "SELECT ";
-            if (columns.length == 0) {
-                query += "* FROM ";
-            } else {
-                for (String column : columns) {
-                    query += column + ",";
-                }
-                query = query.substring(0, query.length()-1);
-                query += " FROM ";
-            }
-            query += tableName;
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(query);
-
+            PreparedStatement preparedStatement =
+                    this.databaseConnection.getConnection()
+                            .prepareStatement(this.createBasicQuery(tableName, columns).toString());
             ResultSet rs = preparedStatement.executeQuery();
             rows = this.executeQueryByTable(tableName, rs, columns);
         } catch (SQLException e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
         return rows;
     }
@@ -75,45 +108,35 @@ public class DatabaseManager {
     /**
      * Obtiene todos los registros de la base de datos mediante un filtrado.
      * Se le debe de pasar el nombre de la tabla que se quiere obtener (utilizar enum {@link Tablas}),
-     * un HashMap en el que la clave sea el nombre de la columna que se desea utilizar
-     * (se recomienda utilizar enums correspondientes en el paquete models.enums), y el valor sea el valor
-     * del campo que deseamos buscar. Si se le pasan columnas, obtiene las columnas dichas de la tabla
-     * (se recomienda utilizar enums correspondientes en el paquete models.enums).
+     * un HashMap en el que la clave sea la columna que se desea utilizar
+     * (usar enums del paquete models.enums), y el valor sea el valor del campo que deseamos buscar.
+     * Si se le pasan columnas, obtiene las columnas dichas de la tabla
+     * (usar enums del paquete models.enums).
      * En caso de que no se pasen columnas, se obtendrán todas las columnas.
-     * @param tableName Nombre de la tabla que se quieren sacar los registros
+     * @param tableName Tabla de la que se quieren sacar los registros
      * @param filters Filtro que se desea realizar, en el campo clave usar el nombre
      *                de la columna que queremos y en el campo valor el campo que queremos buscar
      *                en la base de datos
-     * @param columns Nombre de las columnas que se desea obtener
+     * @param columns Columnas que se desea obtener
      * @return Devuelve un ArrayList con todos los registros que ha encontrado según
      * los parámetros especificados
      */
-    public ArrayList<Agregable> getData(Tablas tableName, HashMap<String, Object> filters, String... columns) {
+    public ArrayList<Agregable> getData(Tablas tableName, HashMap<Columnable, Object> filters, Columnable... columns) {
         ArrayList<Agregable> rows = new ArrayList<Agregable>();
-        if (filters.size() < 2) {
+        if (tableName == null || filters == null || columns == null ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, filters) ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, columns) || filters.size() < 2) {
             return rows;
         }
+        if (this.databaseConnection.isAutoCommitEnabled()) {
+            this.databaseConnection.open();
+        }
         try {
-            PreparedStatement preparedStatement;
-            String query = "SELECT ";
-            if (columns.length == 0) {
-                query += "* FROM ";
-            } else {
-                for (String column : columns) {
-                    query += column + ",";
-                }
-                query = query.substring(0, query.length()-1);
-                query += " FROM ";
-            }
-            String whereQuery = " WHERE ";
-            for (String key : filters.keySet()) {
-                whereQuery += key + " = ? AND ";
-            }
-            whereQuery = whereQuery.substring(0, whereQuery.length()-5);
-            query += tableName;
-
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(query + whereQuery);
-            int dataType = 0, counter = 0;
+            PreparedStatement preparedStatement =
+                    this.databaseConnection.getConnection()
+                            .prepareStatement(this.createBasicQuery(tableName, columns)
+                                    .append(this.createBasicQuery(filters)).toString());
+            int dataType = 0, parameterCounter = 0;
             for (Object value : filters.values()) {
                 if (value instanceof String) {
                     dataType = Types.VARCHAR;
@@ -122,77 +145,100 @@ public class DatabaseManager {
                 } else if (value instanceof Double) {
                     dataType = Types.DOUBLE;
                 }
-                preparedStatement.setObject(++counter, value, dataType);
+                preparedStatement.setObject(++parameterCounter, value, dataType);
             }
             ResultSet rs = preparedStatement.executeQuery();
             rows = this.executeQueryByTable(tableName, rs, columns);
         } catch (SQLException e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
         return rows;
     }
 
-    public ArrayList<Agregable> getData(Tablas tableName, ArrayList<ColumnOrder> orders, String... columns) {
+    /**
+     * Permite realizar una consulta a la base de datos con una ordenación en las columnas.
+     * Se le debe de pasar el nombre de la tabla que se quiere obtener (utilizar enum {@link Tablas}),
+     * un ArrayList de {@link ColumnOrder} en el que se le deberá de pasar como parámetros la columna
+     * que se desea ordenar (usar enums del paquete models.enums), y como segundo parámetro el tipo
+     * de ordenación que se quiere (usar enum {@link src.models.enums.other.Orders Orders}).
+     * Si se le pasan columnas, obtiene las columnas dichas de la tabla
+     * (usar enums del paquete models.enums).
+     * En caso de que no se pasen columnas, se obtendrán todas las columnas.
+     * @param tableName Tabla de la que se quieren sacar los registros
+     * @param orders Lista de campos de la base de datos que se desean ordenar por ASC o DESC
+     * @param columns Columnas que se desea obtener
+     * @return Devuelve un ArrayList con todos los registros que ha encontrado según
+     * los parámetros especificados
+     */
+    public ArrayList<Agregable> getData(Tablas tableName, ArrayList<ColumnOrder> orders, Columnable... columns) {
         ArrayList<Agregable> rows = new ArrayList<Agregable>();
-        try {
-            PreparedStatement preparedStatement;
-            String query = "SELECT ";
-            if (columns.length == 0) {
-                query += "* FROM ";
-            } else {
-                for (String column : columns) {
-                    query += column + ",";
-                }
-                query = query.substring(0, query.length()-1);
-                query += " FROM ";
-            }
-            query += tableName + " ORDER BY ";
-            for (ColumnOrder columnOrder : orders) {
-                query += columnOrder.getColumnName() + " " + columnOrder.getOrder() + ",";
-            }
-            query = query.substring(0, query.length()-1);
-
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(query);
-            ResultSet rs = preparedStatement.executeQuery();
-            rows = this.executeQueryByTable(tableName, rs, columns);
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-        return rows;
-    }
-
-    public ArrayList<Agregable> getData(Tablas tableName, HashMap<String, Object> filters, ArrayList<ColumnOrder> orders,
-                                        String... columns) {
-        ArrayList<Agregable> rows = new ArrayList<Agregable>();
-        if (filters.size() < 2) {
+        if (tableName == null || orders == null || columns == null ||
+                this.checkIfTableTypeNotEqualsColumnsTypeWithListColumnOrder(tableName, orders) ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, columns)) {
             return rows;
         }
+        if (this.databaseConnection.isAutoCommitEnabled()) {
+            this.databaseConnection.open();
+        }
         try {
-            PreparedStatement preparedStatement;
-            String query = "SELECT ";
-            if (columns.length == 0) {
-                query += "* FROM ";
-            } else {
-                for (String column : columns) {
-                    query += column + ",";
-                }
-                query = query.substring(0, query.length()-1);
-                query += " FROM ";
+            PreparedStatement preparedStatement =
+                    this.databaseConnection.getConnection()
+                            .prepareStatement(this.createBasicQuery(tableName, columns)
+                                    .append(this.createBasicQuery(orders)).toString());
+            ResultSet rs = preparedStatement.executeQuery();
+            rows = this.executeQueryByTable(tableName, rs, columns);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
             }
-            query += tableName + " WHERE ";
-            for (String key : filters.keySet()) {
-                query += key + " = ? AND ";
-            }
-            query = query.substring(0, query.length()-5);
-            query += " ORDER BY ";
-            for (ColumnOrder columnOrder : orders) {
-                query += columnOrder.getColumnName() + " " + columnOrder.getOrder() + ",";
-            }
-            query = query.substring(0, query.length()-1);
-            System.out.println(query);
+        }
+        return rows;
+    }
 
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(query);
-            int dataType = 0, counter = 0;
+    /**
+     * Obtiene todos los registros de la base de datos mediante un filtrado y una ordenación en las columnas.
+     * Se le debe de pasar el nombre de la tabla que se quiere obtener (utilizar enum {@link Tablas}),
+     * un HashMap en el que la clave sea la columna que se desea utilizar
+     * (usar enums del paquete models.enums), y el valor sea el valor del campo que deseamos buscar.
+     * Para ordenar, se debe pasar un ArrayList de {@link ColumnOrder} en el que se le deberá de pasar
+     * como parámetros la columna que se desea ordenar (usar enums del paquete models.enums que implementen
+     * la interfaz {@link Columnable}), y como segundo parámetro el tipo de ordenación que se quiere
+     * (usar enum {@link src.models.enums.other.Orders Orders}).
+     * Si se le pasan columnas, obtiene las columnas dichas de la tabla
+     * (usar enums del paquete models.enums).
+     * En caso de que no se pasen columnas, se obtendrán todas las columnas.
+     * @param tableName Tabla de la que se quieren sacar los registros
+     * @param filters Filtro que se desea realizar, en el campo clave usar el nombre
+     *                de la columna que queremos y en el campo valor el campo que queremos buscar
+     *                en la base de datos
+     * @param orders Lista de campos de la base de datos que se desean ordenar por ASC o DESC
+     * @param columns Columnas que se desea obtener
+     * @return Devuelve un ArrayList con todos los registros que ha encontrado según
+     * los parámetros especificados
+     */
+    public ArrayList<Agregable> getData(Tablas tableName, HashMap<Columnable, Object> filters, ArrayList<ColumnOrder> orders,
+                                        Columnable... columns) {
+        ArrayList<Agregable> rows = new ArrayList<Agregable>();
+        if (tableName == null || filters == null || orders == null ||
+                columns == null || this.checkIfTableTypeNotEqualsColumnsType(tableName, filters) ||
+                this.checkIfTableTypeNotEqualsColumnsTypeWithListColumnOrder(tableName, orders) ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, columns) || filters.size() < 2) {
+            return rows;
+        }
+        if (this.databaseConnection.isAutoCommitEnabled()) {
+            this.databaseConnection.open();
+        }
+        try {
+            PreparedStatement preparedStatement =
+                    this.databaseConnection.getConnection().prepareStatement(this.createBasicQuery(tableName, columns)
+                            .append(this.createBasicQuery(filters).append(this.createBasicQuery(orders))).toString());
+            int dataType = 0, parameterCounter = 0;
             for (Object value : filters.values()) {
                 if (value instanceof String) {
                     dataType = Types.VARCHAR;
@@ -201,177 +247,306 @@ public class DatabaseManager {
                 } else if (value instanceof Double) {
                     dataType = Types.DOUBLE;
                 }
-                preparedStatement.setObject(++counter, value, dataType);
+                preparedStatement.setObject(++parameterCounter, value, dataType);
             }
             ResultSet rs = preparedStatement.executeQuery();
             rows = this.executeQueryByTable(tableName, rs, columns);
         } catch (SQLException e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
         return rows;
     }
 
+    /**
+     * Actualiza una o varias filas de una tabla pasada como argumento de la base de datos.
+     * Se le debe de pasar el enum de la tabla que se quiere actualizar y uno o varios
+     * objetos que tengan implementada la interfaz {@link Agregable}. No permite la actualización
+     * de claves primarias ni foráneas.
+     * @param tableName Tabla de la que se quieren actualizar registros
+     * @param agregables Objetos que tengan implementada la interfaz Agregable
+     * @return Devuelve el número de filas que se han actualizado en la tabla de la base de datos.
+     * @see Agregable
+     */
     public int updateRows(Tablas tableName, Agregable... agregables) {
+        if (tableName == null || agregables == null || agregables.length == 0 ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, agregables)) {
+            return 0;
+        }
         try {
             PreparedStatement preparedStatement;
-            String updateSentence = "";
-            String columns = switch (tableName) {
-                case DESARROLLADOR -> Arrays.stream(TablaDesarrollador.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-                case EDITOR -> Arrays.stream(TablaEditor.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-                case GENERO -> Arrays.stream(TablaGenero.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-                case PLATAFORMA -> Arrays.stream(TablaPlataforma.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-                case VIDEOJUEGO -> Arrays.stream(TablaVideojuego.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-                case VIDEOJUEGO_GENERO -> Arrays.stream(TablaVideojuegoGenero.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-                case VIDEOJUEGO_PLATAFORMA -> Arrays.stream(TablaVideojuegoPlataforma.values())
-                        .map(table -> table.getColumnName() + " = ?,")
-                        .collect(Collectors.joining());
-            };
-            columns = columns.substring(0, columns.length()-1);
-            columns = columns.replace("nombre = ?,", "");
-            updateSentence += "UPDATE " + tableName + " SET " + columns + " WHERE nombre = ?";
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(updateSentence);
-            int counter = 0;
-            Field[] fields;
-            for (Agregable agregable : agregables) {
-                fields = agregable.getClass().getDeclaredFields();
-                for (int i = 1; i < fields.length; i++) {
-                    fields[i].setAccessible(true);
-                    preparedStatement.setObject(++counter, fields[i].get(agregable));
-                }
-                fields[0].setAccessible(true);
-                preparedStatement.setObject(++counter, fields[0].get(agregable));
+            Columnable[] selectedTableEnumFields = this.categorizeTable(tableName);
+            String fieldsToUpdate = Arrays.stream(selectedTableEnumFields)
+                    .filter(field -> !field.isPrimaryKey() && !field.isForeignKey())
+                    .map(field -> field.getColumnName() + " = ?,")
+                    .collect(Collectors.joining());
+            fieldsToUpdate = fieldsToUpdate.substring(0, fieldsToUpdate.length()-1);
+            int parameterCounter, resultUpdate = 0;
+            Field[] agregableFields;
+            List<Columnable> invalidColumnsToUpdate = Arrays.stream(selectedTableEnumFields)
+                    .filter(Columnable::isPrimaryKey)
+                    .toList();
+            StringBuilder updateSentence;
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.open();
             }
-            return preparedStatement.executeUpdate();
+            for (Agregable agregable : agregables) {
+                parameterCounter = 0;
+                updateSentence = new StringBuilder("UPDATE " + tableName + " SET " + fieldsToUpdate + " WHERE nombre = ?");
+                preparedStatement = this.databaseConnection.getConnection().prepareStatement(updateSentence.toString());
+                agregableFields = agregable.getClass().getDeclaredFields();
+                NEXT_AGREGABLE:
+                // Comienza en la segunda posición porque se da por hecho que
+                // la clave primaria estará siempre en la primera columna
+                for (int i = 1; i < agregableFields.length; i++) {
+                    for (Columnable invalidColumn : invalidColumnsToUpdate) {
+                        if (agregableFields[i].getName().startsWith(invalidColumn.getColumnName())) {
+                            continue NEXT_AGREGABLE;
+                        }
+                    }
+                    agregableFields[i].setAccessible(true);
+                    preparedStatement.setObject(++parameterCounter, agregableFields[i].get(agregable));
+                }
+                agregableFields[0].setAccessible(true);
+                preparedStatement.setObject(++parameterCounter, agregableFields[0].get(agregable));
+                resultUpdate += preparedStatement.executeUpdate();
+                preparedStatement.close();
+            }
+            return resultUpdate;
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
         return 0;
     }
 
+    /**
+     * Inserta uno o varios registros de una tabla pasada como argumento de la base de datos.
+     * Se le debe de pasar el enum de la tabla que se quiere actualizar y uno o varios
+     * objetos que tengan implementada la interfaz {@link Agregable}.
+     * @param tableName Tabla de la que se quieren insertar registros
+     * @param agregables Objetos que tengan implementada la interfaz Agregable
+     * @return Devuelve el número de filas que se han agregado en la tabla de la base de datos.
+     * @see Agregable
+     */
     public int insertRows(Tablas tableName, Agregable... agregables) {
+        if (tableName == null || agregables == null || agregables.length == 0 ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, agregables)) {
+            return 0;
+        }
         try {
-            PreparedStatement preparedStatement;
-            String insertSentence = "INSERT INTO " + tableName + " (";
-            insertSentence += switch (tableName) {
-                case DESARROLLADOR -> TablaDesarrollador.NOMBRE.getColumnName() + "," +
-                        TablaDesarrollador.FECHA_FUNDACION.getColumnName();
-                case EDITOR -> TablaEditor.NOMBRE.getColumnName() + "," +
-                        TablaEditor.FECHA_FUNDACION.getColumnName();
-                case GENERO -> TablaGenero.NOMBRE.getColumnName() + "," +
-                        TablaGenero.DESCRIPCION.getColumnName();
-                case PLATAFORMA -> TablaPlataforma.NOMBRE.getColumnName();
-                case VIDEOJUEGO -> TablaVideojuego.NOMBRE.getColumnName() + "," +
-                        TablaVideojuego.SINOPSIS.getColumnName() + "," +
-                        TablaVideojuego.FECHA_PUBLICACION.getColumnName() + "," +
-                        TablaVideojuego.NOMBRE_DESARROLLADOR.getColumnName() + "," +
-                        TablaVideojuego.NOMBRE_EDITOR.getColumnName();
-                case VIDEOJUEGO_GENERO -> TablaVideojuegoGenero.NOMBRE_VIDEOJUEGO.getColumnName() + "," +
-                        TablaVideojuegoGenero.NOMBRE_VIDEOJUEGO.getColumnName();
-                case VIDEOJUEGO_PLATAFORMA -> TablaVideojuegoPlataforma.NOMBRE_VIDEOJUEGO.getColumnName() + "," +
-                        TablaVideojuegoPlataforma.NOMBRE_PLATAFORMA.getColumnName();
-            };
-            insertSentence += ") VALUES ";
+            String fieldsToInsert = Arrays.stream(this.categorizeTable(tableName))
+                    .map(Columnable::getColumnName)
+                    .collect(Collectors.joining(","));
+            StringBuilder insertSentence = new StringBuilder("INSERT INTO " + tableName + " (" + fieldsToInsert + ") VALUES ");
+            Field[] agregableFields;
             for (Agregable agregable : agregables) {
-                insertSentence += "(";
-                if (agregable instanceof Desarrollador) {
-                    Desarrollador desarrollador = (Desarrollador) agregable;
-                    insertSentence += "'" + desarrollador.getNombre() + "','" + desarrollador.getFechaFundacion() + "'";
-                } else if (agregable instanceof Editor) {
-                    Editor editor = (Editor) agregable;
-                    insertSentence += "'" + editor.getNombre() + "','" + editor.getFechaFundacion() + "'";
-                } else if (agregable instanceof Genero) {
-                    Genero genero = (Genero) agregable;
-                    insertSentence += "'" + genero.getNombre() + "','" + genero.getDescripcion() + "'";
-                } else if (agregable instanceof Plataforma) {
-                    Plataforma plataforma = (Plataforma) agregable;
-                    insertSentence += "'" + plataforma.getNombre() + "'";
-                } else if (agregable instanceof Videojuego) {
-                    Videojuego videojuego = (Videojuego) agregable;
-                    insertSentence += "'" + videojuego.getNombre() + "'," + "'" + videojuego.getSinopsis() + "'," +
-                            "'" + videojuego.getFechaPublicacion() + "'," + "'" + videojuego.getNombreDesarrollador() +
-                            "'," + "'" + videojuego.getNombreEditor() + "'";
-                } else if (agregable instanceof VideojuegoGenero) {
-                    VideojuegoGenero videojuegoGenero = (VideojuegoGenero) agregable;
-                    insertSentence += "'" + videojuegoGenero.getNombreVideojuego() + "','" +
-                            videojuegoGenero.getNombreGenero() + "'";
-                } else if (agregable instanceof VideojuegoPlataforma) {
-                    VideojuegoPlataforma videojuegoPlataforma = (VideojuegoPlataforma) agregable;
-                    insertSentence += "'" + videojuegoPlataforma.getNombreVideojuego() + "','" +
-                            videojuegoPlataforma.getNombrePlataforma() + "'";
-                }
-                insertSentence += "),";
+                agregableFields = agregable.getClass().getDeclaredFields();
+                insertSentence.append("(").append("?,".repeat(agregableFields.length));
+                insertSentence = new StringBuilder(insertSentence.substring(0, insertSentence.length()-1));
+                insertSentence.append("),");
             }
-            insertSentence = insertSentence.substring(0, insertSentence.length()-1);
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(insertSentence);
-            return preparedStatement.executeUpdate();
-        } catch (SQLException e) {
+            insertSentence = new StringBuilder(insertSentence.substring(0, insertSentence.length()-1));
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.open();
+            }
+            PreparedStatement preparedStatement = this.databaseConnection.getConnection().prepareStatement(insertSentence.toString());
+            int dataType = 0, parameterCounter = 0;
+            for (Agregable agregable : agregables) {
+                agregableFields = agregable.getClass().getDeclaredFields();
+                for (Field field : agregableFields) {
+                    field.setAccessible(true);
+                    if (field.get(agregable) == null) {
+                        return 0;
+                    }
+                    if (field.get(agregable) instanceof String) {
+                        dataType = Types.VARCHAR;
+                    } else if (field.get(agregable) instanceof Integer) {
+                        dataType = Types.INTEGER;
+                    } else if (field.get(agregable) instanceof Double) {
+                        dataType = Types.DOUBLE;
+                    }
+                    preparedStatement.setObject(++parameterCounter, field.get(agregable), dataType);
+                }
+            }
+            int resultInsert = preparedStatement.executeUpdate();
+            preparedStatement.close();
+            return resultInsert;
+        } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
         return 0;
     }
 
-    public int deleteRows(Tablas tableName, HashMap<String, Object> columnValue) {
+    /**
+     * Elimina una o varias filas de una tabla pasada como argumento de la base de datos.
+     * Se le debe de pasar el enum de la tabla que se quiere actualizar y uno o varios
+     * objetos que tengan implementada la interfaz {@link Agregable}. Como segundo parámetro se
+     * debe de pasar un ArrayList de {@link ColumnFilter}, que almacenará dos campos, el primero
+     * es la columna que se desea filtrar para el borrado (usar enums del paquete models.enums que implementen
+     * la interfaz {@link Columnable}) y el segundo campo el valor que se quiere eliminar. No se
+     * utiliza un HashMap debido a que si se quieren filtrar por varias columnas de la misma
+     * (por ejemplo, TablaDesarrollador.NOMBRE = "Capcom" OR TablaDesarrollador.NOMBRE = "Mojang"),
+     * con un HashMap no se podría, ya que la clave no sería única.
+     * @param tableName Tabla de la que se quieren eliminar los registros
+     * @param columnsFilter Objetos que tengan implementada la interfaz Agregable
+     * @return Devuelve el número de filas que se han actualizado en la tabla de la base de datos.
+     * @see Agregable
+     */
+    public int deleteRows(Tablas tableName, ArrayList<ColumnFilter> columnsFilter) {
+        if (tableName == null || columnsFilter == null ||
+                this.checkIfTableTypeNotEqualsColumnsTypeWithListColumnFilter(tableName, columnsFilter)) {
+            return 0;
+        }
         try {
-            PreparedStatement preparedStatement;
-            String deleteSentence = "DELETE FROM " + tableName + " WHERE ";
-            deleteSentence = deleteSentence.substring(0, deleteSentence.length()-1);
-            for (String key : columnValue.keySet()) {
-                deleteSentence += " " + key + " = ? OR";
+            StringBuilder deleteSentence = new StringBuilder("DELETE FROM " + tableName + " WHERE ");
+            for (ColumnFilter columnFilter : columnsFilter) {
+                deleteSentence.append(columnFilter.getColumnName()).append(" = ? OR ");
             }
-            deleteSentence = deleteSentence.substring(0, deleteSentence.length()-3);
-            preparedStatement = this.databaseConnection.getConnection().prepareStatement(deleteSentence);
-            int dataType = 0, counter = 0;
-            for (Object value : columnValue.values()) {
-                if (value instanceof String) {
+            deleteSentence = new StringBuilder(deleteSentence.substring(0, deleteSentence.length()-4));
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.open();
+            }
+            PreparedStatement preparedStatement =
+                    this.databaseConnection.getConnection().prepareStatement(deleteSentence.toString());
+            int dataType = 0, parameterCounter = 0;
+            Object columnValue;
+            for (ColumnFilter columnFilter : columnsFilter) {
+                columnValue = columnFilter.getColumnValue();
+                if (columnValue instanceof String) {
                     dataType = Types.VARCHAR;
-                } else if (value instanceof Integer) {
+                } else if (columnValue instanceof Integer) {
                     dataType = Types.INTEGER;
-                } else if (value instanceof Double) {
+                } else if (columnValue instanceof Double) {
                     dataType = Types.DOUBLE;
                 }
-                preparedStatement.setObject(++counter, value, dataType);
+                preparedStatement.setObject(++parameterCounter, columnValue, dataType);
             }
-            return preparedStatement.executeUpdate();
+            int resultExecute = preparedStatement.executeUpdate();
+            preparedStatement.close();
+            return resultExecute;
         } catch (SQLException e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
         return 0;
     }
 
-    /*public void importXmlToTable(Tablas tableName, String xmlFileName) {
+    /**
+     * Importa de un fichero XML especificado a una cláusula INSERT INTO
+     * en la base de datos. Para poder realizar la importación, será necesario
+     * que el XML tenga el mismo número de columnas que tenga su tabla equivalente.
+     * @param tableName Tabla de la que se quieren insertar los registros
+     * @param xmlFileName Ruta del fichero XML a importar (importante, añadir la extensión)
+     * @return Devuelve true si se pudo realizar la importación y false si no se pudo.
+     */
+    public boolean importXmlToTable(Tablas tableName, String xmlFileName) {
+        if (tableName == null || xmlFileName == null || !new File(xmlFileName).exists()) {
+            return false;
+        }
         try {
             Document document = DocumentBuilderFactory.newDefaultInstance().newDocumentBuilder().parse(xmlFileName);
             Element root = document.getDocumentElement();
-            String insertSentence = "INSERT INTO " + root.getChildNodes().item(1).getNodeName() + " (";
-            NodeList childrenNodes = root.getChildNodes();
-            insertSentence += "nombre,";
-            System.out.println(root.getChildNodes().item(1).getChildNodes().item(3).getTextContent());
-            System.out.println(childrenNodes.item(1).getChildNodes().getLength());
-            for (int i = 1; i <= childrenNodes.item(1).getChildNodes().getLength(); i+=2) {
-                Node node = childrenNodes.item(i);
-                insertSentence += node.getChildNodes().item(i).getNodeName() + ",";
+            NodeList childrenRootNodesElement = root.getChildNodes();
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.open();
             }
-            insertSentence = insertSentence.substring(0, insertSentence.length()-1).concat(") VALUES (");
-            System.out.println(insertSentence);
+            if (childrenRootNodesElement.getLength() == 0 ||
+                    !childrenRootNodesElement.item(1).getNodeName().equals(tableName.getTableName()) ||
+                    childrenRootNodesElement.item(1).getAttributes().item(0) == null) {
+                return false;
+            }
+            int elementCounter = 0;
+            for (int i = 0; i < childrenRootNodesElement.getLength(); i++) {
+                Node element = childrenRootNodesElement.item(i);
+                // Contar solo los elementos
+                if (element.getNodeType() == Node.ELEMENT_NODE) {
+                    elementCounter++;
+                    for (int j = 0; j < element.getChildNodes().getLength(); j++) {
+                        Node childElement = element.getChildNodes().item(j);
+                        if (childElement.getNodeType() == Node.ELEMENT_NODE) {
+                            elementCounter++;
+                        }
+                    }
+                    break;
+                }
+            }
+            // Si el primer elemento (videojuego por ejemplo) del XML no tiene el mismo número de campos
+            // que el de su tabla correspondiente, no se puede importar, ya que
+            // se debe realizar un INSERT INTO con todos los campos
+            if (elementCounter != tableName.getEquivalentTableEnum().getFields().length) {
+                return false;
+            }
+            StringBuilder insertSentence = new StringBuilder("INSERT INTO " + tableName + " VALUES ");
+            for (int i = 0; i < childrenRootNodesElement.getLength(); i++) {
+                Node childrenNode = childrenRootNodesElement.item(i);
+                if (childrenNode.getNodeType() == Node.ELEMENT_NODE) {
+                    insertSentence.append("(?,");
+                    for (int j = 0; j < childrenNode.getChildNodes().getLength(); j++) {
+                        Node childrenTagNode = childrenNode.getChildNodes().item(j);
+                        if (childrenTagNode.getNodeType() == Node.ELEMENT_NODE) {
+                            insertSentence.append("?,");
+                        }
+                    }
+                    insertSentence = new StringBuilder(insertSentence.substring(0, insertSentence.length()-1));
+                    insertSentence.append("),");
+                }
+            }
+            insertSentence = new StringBuilder(insertSentence.substring(0, insertSentence.length()-1));
+
+            int parameterCounter = 0;
+            PreparedStatement preparedStatement = this.databaseConnection.getConnection().prepareStatement(insertSentence.toString());
+            for (int i = 0; i < childrenRootNodesElement.getLength(); i++) {
+                Node childrenNode = childrenRootNodesElement.item(i);
+                if (childrenNode.getNodeType() == Node.ELEMENT_NODE) {
+                    preparedStatement.setString(++parameterCounter, childrenNode.getAttributes().item(0).getNodeValue());
+                    for (int j = 0; j < childrenNode.getChildNodes().getLength(); j++) {
+                        Node childrenTagNode = childrenNode.getChildNodes().item(j);
+                        if (childrenTagNode.getNodeType() == Node.ELEMENT_NODE) {
+                            preparedStatement.setString(++parameterCounter, childrenTagNode.getTextContent());
+                        }
+                    }
+                }
+            }
+            preparedStatement.executeUpdate();
+            preparedStatement.close();
+            return true;
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (this.databaseConnection.isAutoCommitEnabled()) {
+                this.databaseConnection.disconnect();
+            }
         }
-    }*/
+        return false;
+    }
 
-    public void exportTableToXml(Tablas tableName, String xmlFileName) {
-        ArrayList<Agregable> rows = this.getData(tableName);
+    /**
+     * Exporta una consulta SQL de la base de datos a XML.
+     * @param tableName Tabla de la que se quieren insertar los registros
+     * @param xmlFileName Ruta del fichero XML a importar (importante, añadir la extensión)
+     * @param columns Columnas que se desea obtener en la consulta
+     * @return Devuelve true si se exportó correctamente el archivo XML y false si no lo hizo.
+     */
+    public boolean exportTableToXml(Tablas tableName, String xmlFileName, Columnable... columns) {
+        if (tableName == null || xmlFileName == null || columns == null ||
+                this.checkIfTableTypeNotEqualsColumnsType(tableName, columns)) {
+            return false;
+        }
+        ArrayList<Agregable> rows = this.getData(tableName, columns);
         try {
             Document document = DocumentBuilderFactory.newDefaultInstance().newDocumentBuilder().newDocument();
             String rootName = switch (tableName) {
@@ -383,78 +558,60 @@ public class DatabaseManager {
                 case VIDEOJUEGO_GENERO -> "videojuego-generos";
                 case VIDEOJUEGO_PLATAFORMA -> "videojuego-plataformas";
             };
+            Columnable[] columnables = this.categorizeTable(tableName);
             Element root = document.createElement(rootName);
-            Element childElement;
+            Element childElement, element;
+            List<Field> agregableFields;
+            Arrays.sort(columns);
             for (Agregable row : rows) {
                 childElement = document.createElement(tableName.getTableName());
-                if (row instanceof Desarrollador) {
-                    Desarrollador developer = (Desarrollador) row;
-                    childElement.setAttribute(TablaDesarrollador.NOMBRE.getColumnName(), developer.getNombre());
-                    Element date = document.createElement(TablaDesarrollador.FECHA_FUNDACION.getColumnName());
-                    date.appendChild(document.createTextNode(developer.getFechaFundacion().toString()));
-                    childElement.appendChild(date);
-                } else if (row instanceof Editor) {
-                    Editor editor = (Editor) row;
-                    childElement.setAttribute(TablaEditor.NOMBRE.getColumnName(), editor.getNombre());
-                    Element date = document.createElement(TablaDesarrollador.FECHA_FUNDACION.getColumnName());
-                    date.appendChild(document.createTextNode(editor.getFechaFundacion().toString()));
-                    childElement.appendChild(date);
-                } else if (row instanceof Genero) {
-                    Genero gender = (Genero) row;
-                    childElement.setAttribute(TablaGenero.NOMBRE.getColumnName(), gender.getNombre());
-                    Element description = document.createElement(TablaGenero.DESCRIPCION.getColumnName());
-                    description.appendChild(document.createElement(gender.getDescripcion()));
-                    childElement.appendChild(description);
-                } else if (row instanceof Plataforma) {
-                    Plataforma platform = (Plataforma) row;
-                    childElement.setAttribute(TablaPlataforma.NOMBRE.getColumnName(), platform.getNombre());
-                } else if (row instanceof Videojuego) {
-                    Videojuego videogame = (Videojuego) row;
-                    childElement.setAttribute(TablaPlataforma.NOMBRE.getColumnName(), videogame.getNombre());
-                    Element synopsis = document.createElement(TablaVideojuego.SINOPSIS.getColumnName());
-                    synopsis.appendChild(document.createTextNode(videogame.getSinopsis()));
-                    Element datePublication = document.createElement(TablaVideojuego.FECHA_PUBLICACION.getColumnName());
-                    datePublication.appendChild(document.createTextNode(videogame.getFechaPublicacion().toString()));
-                    Element developerName = document.createElement(TablaVideojuego.NOMBRE_DESARROLLADOR.getColumnName());
-                    developerName.appendChild(document.createTextNode(videogame.getNombreDesarrollador()));
-                    Element editorName = document.createElement(TablaVideojuego.NOMBRE_EDITOR.getColumnName());
-                    editorName.appendChild(document.createTextNode(videogame.getNombreEditor()));
-                    childElement.appendChild(synopsis);
-                    childElement.appendChild(datePublication);
-                    childElement.appendChild(developerName);
-                    childElement.appendChild(editorName);
-                } else if (row instanceof VideojuegoGenero) {
-                    VideojuegoGenero videogameGender = (VideojuegoGenero) row;
-                    childElement.setAttribute(TablaVideojuegoGenero.NOMBRE_VIDEOJUEGO.getColumnName(),
-                            videogameGender.getNombreVideojuego());
-                    Element videogameGenderElement = document.createElement(TablaVideojuegoGenero.NOMBRE_GENERO.getColumnName());
-                    videogameGenderElement.appendChild(document.createTextNode(videogameGender.getNombreGenero()));
-                    childElement.appendChild(videogameGenderElement);
-                } else if (row instanceof VideojuegoPlataforma) {
-                    VideojuegoPlataforma videogamePlatform = (VideojuegoPlataforma) row;
-                    childElement.setAttribute(TablaVideojuegoPlataforma.NOMBRE_VIDEOJUEGO.getColumnName(),
-                            videogamePlatform.getNombreVideojuego());
-                    Element videogamePlatformElement =
-                            document.createElement(TablaVideojuegoPlataforma.NOMBRE_PLATAFORMA.getColumnName());
-                    videogamePlatformElement.appendChild(document.createTextNode(videogamePlatform.getNombrePlataforma()));
-                    childElement.appendChild(videogamePlatformElement);
+                agregableFields = Arrays.stream(row.getClass().getDeclaredFields())
+                        .filter(field -> {
+                            boolean fieldIsNotNull = false;
+                            try {
+                                field.setAccessible(true);
+                                fieldIsNotNull = field.get(row) != null;
+                            } catch (IllegalAccessException e) {
+                                e.printStackTrace();
+                            }
+                            return fieldIsNotNull;
+                        }).toList();
+                for (Field agregableField : agregableFields) {
+                    agregableField.setAccessible(true);
+                    // Si la primera columna equivale a la clave primaria, ponerlo como atributo
+                    if (agregableField.getName().equals(this.convertSnakeCaseToCamelCase(columnables[0].getColumnName()))) {
+                        childElement.setAttribute(agregableField.getName(), (String) agregableField.get(row));
+                        continue;
+                    }
+                    element = document.createElement(agregableField.getName());
+                    element.appendChild(document.createTextNode(agregableField.get(row).toString()));
+                    childElement.appendChild(element);
                 }
                 root.appendChild(childElement);
             }
-            FileWriter fw = new FileWriter(xmlFileName);
             document.appendChild(root);
             Transformer transformer = TransformerFactory.newDefaultInstance().newTransformer();
             transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
             transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-            DOMSource domSource = new DOMSource(document);
-            StreamResult streamResult = new StreamResult(fw);
-            transformer.transform(domSource, streamResult);
+            transformer.transform(new DOMSource(document), new StreamResult(new FileWriter(xmlFileName)));
+            return true;
         } catch (Exception e) {
             e.printStackTrace();
         }
+        return false;
     }
 
-    private ArrayList<Agregable> executeQueryByTable(Tablas tableName, ResultSet rs, String[] columns) {
+    /**
+     * Almacena los registros de una consulta SQL en un ArrayList de {@link Agregable}
+     * a partir del nombre de la tabla especificada en el parámetro, el ResultSet que ha llegado de la consulta
+     * y las {@link Columnable columnas} por las que se ha filtrado.
+     * @param tableName Tabla de la que se quieren insertar los registros
+     * @param rs Registros encontrados en la consulta realizada
+     * @param columns Columnas que se desea obtener en la consulta
+     * @return Devuelve un ArrayList con todos los objetos mapeados que han llegado de la consulta
+     * de la base de datos
+     */
+    private ArrayList<Agregable> executeQueryByTable(Tablas tableName, ResultSet rs, Columnable[] columns) {
         ArrayList<Agregable> rows = new ArrayList<Agregable>();
         try {
             switch (tableName) {
@@ -469,9 +626,9 @@ public class DatabaseManager {
                         }
                         desarrollador = new Desarrollador();
                         for (int i = 0; i < columns.length; i++) {
-                            if (TablaDesarrollador.NOMBRE.getColumnName().equals(columns[i])) {
+                            if (TablaDesarrollador.NOMBRE.getColumnName().equals(columns[i].getColumnName())) {
                                 desarrollador.setNombre(rs.getString(i+1));
-                            } else if (TablaDesarrollador.FECHA_FUNDACION.getColumnName().equals(columns[i])) {
+                            } else if (TablaDesarrollador.FECHA_FUNDACION.getColumnName().equals(columns[i].getColumnName())) {
                                 desarrollador.setFechaFundacion(Instant.ofEpochMilli(rs.getDate(i+1).getTime())
                                         .atZone(ZoneId.systemDefault()).toLocalDate());
                             }
@@ -490,9 +647,9 @@ public class DatabaseManager {
                         }
                         editor = new Editor();
                         for (int i = 0; i < columns.length; i++) {
-                            if (TablaEditor.NOMBRE.getColumnName().equals(columns[i])) {
+                            if (TablaEditor.NOMBRE.getColumnName().equals(columns[i].getColumnName())) {
                                 editor.setNombre(rs.getString(i+1));
-                            } else if (TablaEditor.FECHA_FUNDACION.getColumnName().equals(columns[i])) {
+                            } else if (TablaEditor.FECHA_FUNDACION.getColumnName().equals(columns[i].getColumnName())) {
                                 editor.setFechaFundacion(Instant.ofEpochMilli(rs.getDate(i+1).getTime())
                                         .atZone(ZoneId.systemDefault()).toLocalDate());
                             }
@@ -509,9 +666,9 @@ public class DatabaseManager {
                         }
                         genero = new Genero();
                         for (int i = 0; i < columns.length; i++) {
-                            if (TablaGenero.NOMBRE.getColumnName().equals(columns[i])) {
+                            if (TablaGenero.NOMBRE.getColumnName().equals(columns[i].getColumnName())) {
                                 genero.setNombre(rs.getString(i+1));
-                            } else if (TablaGenero.DESCRIPCION.getColumnName().equals(columns[i])) {
+                            } else if (TablaGenero.DESCRIPCION.getColumnName().equals(columns[i].getColumnName())) {
                                 genero.setDescripcion(rs.getString(i+1));
                             }
                         }
@@ -535,13 +692,17 @@ public class DatabaseManager {
                         }
                         videojuego = new Videojuego();
                         for (int i = 0; i < columns.length; i++) {
-                            if (TablaVideojuego.NOMBRE.getColumnName().equals(columns[i])) {
+                            if (TablaVideojuego.NOMBRE.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuego.setNombre(rs.getString(i+1));
-                            } else if (TablaVideojuego.SINOPSIS.getColumnName().equals(columns[i])) {
+                            } else if (TablaVideojuego.SINOPSIS.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuego.setSinopsis(rs.getString(i+1));
-                            } else if (TablaVideojuego.FECHA_PUBLICACION.getColumnName().equals(columns[i])) {
+                            } else if (TablaVideojuego.FECHA_PUBLICACION.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuego.setFechaPublicacion(Instant.ofEpochMilli(rs.getDate(i+1).getTime())
                                         .atZone(ZoneId.systemDefault()).toLocalDate());
+                            } else if (TablaVideojuego.NOMBRE_DESARROLLADOR.getColumnName().equals(columns[i].getColumnName())) {
+                                videojuego.setNombreDesarrollador(rs.getString(i+1));
+                            } else if (TablaVideojuego.NOMBRE_EDITOR.getColumnName().equals(columns[i].getColumnName())) {
+                                videojuego.setNombreEditor(rs.getString(i+1));
                             }
                         }
                         rows.add(videojuego);
@@ -556,9 +717,9 @@ public class DatabaseManager {
                         }
                         videojuegoGenero = new VideojuegoGenero();
                         for (int i = 0; i < columns.length; i++) {
-                            if (TablaVideojuegoGenero.NOMBRE_VIDEOJUEGO.getColumnName().equals(columns[i])) {
+                            if (TablaVideojuegoGenero.NOMBRE_VIDEOJUEGO.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuegoGenero.setNombreVideojuego(rs.getString(i+1));
-                            } else if (TablaVideojuegoGenero.NOMBRE_GENERO.getColumnName().equals(columns[i])) {
+                            } else if (TablaVideojuegoGenero.NOMBRE_GENERO.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuegoGenero.setNombreGenero(rs.getString(i+1));
                             }
                         }
@@ -574,9 +735,9 @@ public class DatabaseManager {
                         }
                         videojuegoPlataforma = new VideojuegoPlataforma();
                         for (int i = 0; i < columns.length; i++) {
-                            if (TablaVideojuegoPlataforma.NOMBRE_VIDEOJUEGO.getColumnName().equals(columns[i])) {
+                            if (TablaVideojuegoPlataforma.NOMBRE_VIDEOJUEGO.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuegoPlataforma.setNombreVideojuego(rs.getString(i+1));
-                            } else if (TablaVideojuegoPlataforma.NOMBRE_PLATAFORMA.getColumnName().equals(columns[i])) {
+                            } else if (TablaVideojuegoPlataforma.NOMBRE_PLATAFORMA.getColumnName().equals(columns[i].getColumnName())) {
                                 videojuegoPlataforma.setNombrePlataforma(rs.getString(i+1));
                             }
                         }
@@ -586,7 +747,210 @@ public class DatabaseManager {
             }
         } catch (SQLException e) {
             e.printStackTrace();
+        } finally {
+            try {
+                rs.close();
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
         }
         return rows;
+    }
+
+    /**
+     * Crea una consulta básica con el nombre de la tabla que se consultaron los datos
+     * y, si tiene columnas pasadas por parámetro, se muestran las columnas únicamente.
+     * La consulta creada es del estilo "SELECT * FROM x" o "SELECT x,x FROM x".
+     * @param tableName Tabla de la que se quieren sacar los registros
+     * @param columns Columnas que se desea obtener en la consulta
+     * @return Devuelve un StringBuilder para que en caso de que se realice una consulta
+     * más compleja, se pueda seguir concatenando.
+     */
+    private StringBuilder createBasicQuery(Tablas tableName, Columnable[] columns) {
+        StringBuilder query = new StringBuilder("SELECT ");
+        if (columns.length == 0) {
+            query.append("*");
+        } else {
+            for (Columnable column : columns) {
+                query.append(column).append(",");
+            }
+            query = new StringBuilder(query.substring(0, query.length()-1));
+        }
+        query.append(" FROM ").append(tableName);
+        return query;
+    }
+
+    /**
+     * Crea una consulta básica con filtros (cláusula WHERE). Se le debe pasar un HashMap en el que
+     * la clave sea la columna que se desea utilizar (usar enums del paquete models.enums), y el valor
+     * sea el valor del campo que deseamos buscar.
+     * La consulta creada es del estilo "WHERE x = x" o "WHERE x = x AND y = y".
+     * @param filters Filtro que se desea realizar, en el campo clave usar el nombre de la
+     *                columna que queremos y en el campo valor el campo que queremos buscar en la base de datos
+     * @return Devuelve un StringBuilder para que en caso de que se realice una consulta
+     * más compleja, se pueda seguir concatenando.
+     */
+    private StringBuilder createBasicQuery(HashMap<Columnable, Object> filters) {
+        StringBuilder whereQuery = new StringBuilder(" WHERE ");
+        for (Columnable key : filters.keySet()) {
+            whereQuery.append(key).append(" = ? AND ");
+        }
+        whereQuery = new StringBuilder(whereQuery.substring(0, whereQuery.length()-5));
+        return whereQuery;
+    }
+
+    /**
+     * Crea una consulta básica con ordenación (cláusula ORDER BY). Se le debe pasar un ArrayList
+     * de {@link ColumnOrder} en el que se le deberá de pasar como parámetros la columna
+     * que se desea ordenar (usar enums del paquete models.enums), y como segundo parámetro el tipo
+     * de ordenación que se quiere (usar enum {@link src.models.enums.other.Orders Orders}).
+     * La consulta creada es del estilo "ORDER BY x ASC" o "ORDER BY y DESC" o "ORDER BY i DESC,z ASC".
+     * @param orders Lista de campos de la base de datos que se desean ordenar por ASC o DESC
+     * @return Devuelve un StringBuilder para que en caso de que se realice una consulta
+     * más compleja, se pueda seguir concatenando.
+     */
+    private StringBuilder createBasicQuery(ArrayList<ColumnOrder> orders) {
+        StringBuilder orderQuery = new StringBuilder(" ORDER BY ");
+        for (ColumnOrder columnOrder : orders) {
+            orderQuery.append(columnOrder.getColumnName()).append(" ").append(columnOrder.getOrder()).append(",");
+        }
+        orderQuery = new StringBuilder(orderQuery.substring(0, orderQuery.length()-1));
+        return orderQuery;
+    }
+
+    /**
+     * Comprueba si las {@link Columnable columnas} pasadas como argumento, son las equivalentes
+     * al nombre de la {@link Tablas tabla} que se ha pasado como primer argumento. Por ejemplo,
+     * pasar Tablas.VIDEOJUEGO y TablaDesarrollador.NOMBRE son incompatibles, pero Tablas.VIDEOJUEGO
+     * y TablaVideojuego.NOMBRE sí son compatibles.
+     * @param tableName Tabla seleccionada
+     * @param columns Columnas a comparar si son equivalentes con la tabla seleccionada
+     * @return Devuelve true si las columnas son equivalentes a la tabla seleccionada y false si no lo son.
+     */
+    private boolean checkIfTableTypeNotEqualsColumnsType(Tablas tableName, Columnable[] columns) {
+        Class<? extends Columnable> equivalentColumnTable = tableName.getEquivalentTableEnum();
+        for (Columnable column : columns) {
+            if (!column.getClass().getSimpleName().equals(equivalentColumnTable.getSimpleName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Comprueba si los objetos {@link Agregable agregables} pasadas como argumento, son las equivalentes
+     * al nombre de la {@link Tablas tabla} que se ha pasado como primer argumento. Por ejemplo,
+     * pasar Tablas.VIDEOJUEGO y new Desarrollador() son incompatibles, pero Tablas.VIDEOJUEGO
+     * y new Videojuego() sí son compatibles.
+     * @param tableName Tabla seleccionada
+     * @param agregables Objetos a comparar si son equivalentes con la tabla seleccionada
+     * @return Devuelve true si las columnas son equivalentes a la tabla seleccionada y false si no lo son.
+     */
+    private boolean checkIfTableTypeNotEqualsColumnsType(Tablas tableName, Agregable[] agregables) {
+        Class<? extends Agregable> equivalentColumnTable = tableName.getEquivalentTableClass();
+        for (Agregable agregable : agregables) {
+            if (!agregable.getClass().getSimpleName().equals(equivalentColumnTable.getSimpleName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Comprueba si el HashMap con {@link Columnable columnas} pasadas como argumento, son las equivalentes
+     * al nombre de la {@link Tablas tabla} que se ha pasado como primer argumento. Por ejemplo,
+     * pasar Tablas.VIDEOJUEGO y TablaDesarrollador.NOMBRE son incompatibles, pero Tablas.VIDEOJUEGO
+     * y TablaVideojuego.NOMBRE sí son compatibles.
+     * @param tableName Tabla seleccionada
+     * @param columns Clave de columnas a comparar si son equivalentes con la tabla seleccionada
+     * @return Devuelve true si las columnas son equivalentes a la tabla seleccionada y false si no lo son.
+     */
+    private boolean checkIfTableTypeNotEqualsColumnsType(Tablas tableName, HashMap<Columnable, Object> columns) {
+        Class<? extends Columnable> equivalentColumnTable = tableName.getEquivalentTableEnum();
+        for (Columnable column : columns.keySet()) {
+            if (!column.getClass().getSimpleName().equals(equivalentColumnTable.getSimpleName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Comprueba si el ArrayList de {@link ColumnOrder}, la propiedad {@link Columnable columnName},
+     * pasadas como argumento, son las equivalentes al nombre de la {@link Tablas tabla} que se ha pasado
+     * como primer argumento. Por ejemplo, pasar Tablas.VIDEOJUEGO y TablaDesarrollador.NOMBRE son incompatibles,
+     * pero Tablas.VIDEOJUEGO y TablaVideojuego.NOMBRE sí son compatibles.
+     * @param tableName Tabla seleccionada
+     * @param columns Lista de columnas a comparar si son equivalentes con la tabla seleccionada
+     * @return Devuelve true si las columnas son equivalentes a la tabla seleccionada y false si no lo son.
+     */
+    private boolean checkIfTableTypeNotEqualsColumnsTypeWithListColumnOrder(Tablas tableName, ArrayList<ColumnOrder> columns) {
+        Class<? extends Columnable> equivalentColumnTable = tableName.getEquivalentTableEnum();
+        for (ColumnOrder column : columns) {
+            if (!column.getColumnName().getClass().getSimpleName().equals(equivalentColumnTable.getSimpleName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Comprueba si el ArrayList de {@link ColumnFilter}, la propiedad {@link Columnable columnName},
+     * pasadas como argumento, son las equivalentes al nombre de la {@link Tablas tabla} que se ha pasado
+     * como primer argumento. Por ejemplo, pasar Tablas.VIDEOJUEGO y TablaDesarrollador.NOMBRE son incompatibles,
+     * pero Tablas.VIDEOJUEGO y TablaVideojuego.NOMBRE sí son compatibles.
+     * @param tableName Tabla seleccionada
+     * @param columns Lista de columnas a comparar si son equivalentes con la tabla seleccionada
+     * @return Devuelve true si las columnas son equivalentes a la tabla seleccionada y false si no lo son.
+     */
+    private boolean checkIfTableTypeNotEqualsColumnsTypeWithListColumnFilter(Tablas tableName, ArrayList<ColumnFilter> columns) {
+        Class<? extends Columnable> equivalentColumnTable = tableName.getEquivalentTableEnum();
+        for (ColumnFilter column : columns) {
+            if (!column.getColumnName().getClass().getSimpleName().equals(equivalentColumnTable.getSimpleName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Devuelve un array de las constantes del enum equivalente a la {@link Tablas tabla}
+     * pasada como argumento.
+     * @param tableName Tabla seleccionada
+     * @return Devuelve un array de las constantes que contiene la clase enum
+     * equivalente a la tabla seleccionada como parámetro.
+     */
+    private Columnable[] categorizeTable(Tablas tableName) {
+        return switch (tableName) {
+            case DESARROLLADOR -> TablaDesarrollador.values();
+            case EDITOR -> TablaEditor.values();
+            case GENERO -> TablaGenero.values();
+            case PLATAFORMA -> TablaPlataforma.values();
+            case VIDEOJUEGO -> TablaVideojuego.values();
+            case VIDEOJUEGO_GENERO -> TablaVideojuegoGenero.values();
+            case VIDEOJUEGO_PLATAFORMA -> TablaVideojuegoPlataforma.values();
+        };
+    }
+
+    /**
+     * Método de ayuda para la conversión de nombres entre enums y su respectiva clase de mapeado,
+     * que los enum utilizan snake case y en las clases utilizan pascal case.
+     * @param snakeCaseString String en formato snake_case
+     * @return Devuelve un String transformado la palabra en pascalCase
+     */
+    private String convertSnakeCaseToCamelCase(String snakeCaseString) {
+        if (!snakeCaseString.contains("_")) {
+            return snakeCaseString;
+        }
+        return Arrays.stream(snakeCaseString.split("_")).reduce("", (a, b) -> {
+            if (a.equals("")) {
+                return a.concat(b);
+            }
+            return a.concat(b.substring(0,1).toUpperCase().concat(b.substring(1)));
+        });
+    }
+
+    public DatabaseConnection getDatabaseConnection() {
+        return databaseConnection;
     }
 }
